@@ -1,0 +1,221 @@
+---
+title: "DREAM5_Score"
+author: "Adriano Martinelli"
+date: "04/05/2018"
+output: html_document
+---
+
+## Load libraries
+```{r}
+rm(list = ls())
+library(DESeq2)
+library(nem)
+library(readr)
+library('dplyr')
+library('tidyr')
+```
+
+
+##Parameter
+```{r}
+network = c(3)
+
+ADJUST = F
+
+#Appendix for adjustement
+adj = "";
+if(ADJUST == TRUE) adj = "_adjusted"
+
+```
+
+##File paths
+```{r}
+#Working directory
+wd = "/Users/adrianomartinelli/polybox/ETH/Bachelor Thesis/DREAM Challange/DREAM5/DREAM5_network_inference_challenge/Evaluation scripts/NEM Script/"
+
+#Euler
+#wd = "/cluster/home/adrianom/DREAM5_EULER/Evaluation scripts/NEM Script"
+setwd(wd)
+
+#Load functions
+source("DREAMFUN.R")
+
+path = "../../"
+
+#Folder
+folder = paste0("Network", network,"/")
+method = c('pval','odds')
+
+#Files
+goldfiles = paste0("DREAM5_NetworkInference_GoldStandard_Network", network, ".tsv")
+
+#generate file names
+file_gold = paste0('gold standard/', goldfiles)
+```
+
+##Load workspace & goldstandard
+In network 3 there are only 9 KOgenes: G235, G281, G309, G313, G55, G92 available (KOgenes: G42  G55  G92  G235 G281 G309 G313 G316 G319)
+```{r}
+#Load workspace for network
+setwd(wd)
+setwd(paste0(path, folder))
+
+#Load workspace
+load(paste0("net", network,"_NEM", adj,".RData"))
+
+#Order KOgenes
+KOgenes = KOgenes[order(KOgenes, decreasing = F)]
+
+gold = read_tsv(file_gold, col_names = FALSE)
+colnames(gold) = c("N1", "N2", "Edge")
+gold_ = spread(gold, N2, Edge)
+
+#Close initial goldstandard
+tmprow = gold_$N1
+gold_ = as.matrix(gold_[-1])
+rownames(gold_) = tmprow
+#tt = gold_
+
+#Generate subset of gold standard with Snodes which have an outgoing edge (for transitive closure)
+#Network 1: 178x178 matrix
+idx = sapply(rownames(gold_), function(x) which(x == colnames(gold_)))
+goldSub_ = gold_[,idx]
+
+#close graph
+#Network 1/Network 1 Sub/Network 1 Snodes: not closed: /246/; closed: /1024/
+#Network 3/Network 3 Sub/Network 3 Snodes: not closed: 544/110/0; closed: 545/248/1
+#Network 5/Network 5 Sub/Network 5 Snodes: not closed: /; closed: /
+goldSub_ = goldSub_[order(rownames(goldSub_), decreasing = F), order(colnames(goldSub_), decreasing = F)]
+idx = which(is.na(goldSub_))
+goldSub_[idx] = 0
+goldSub_ = as(transitive.closure(goldSub_, loops = FALSE), "matrix")
+goldSub_[idx] = NA
+
+idxrow = lapply(KOgenes, function(x) which(rownames(goldSub_) == x))
+idxcol = lapply(KOgenes, function(x) which(colnames(goldSub_) == x))
+
+#gold S-node network
+goldSnode_ = goldSub_[unlist(idxrow), unlist(idxcol)]
+
+#Preparation gold_ matrix
+#Replace all entries in the complete gold_ standard with the closed form (goldSub_)
+idx = sapply(rownames(gold_), function(x) which(x == colnames(gold_)))
+gold_[, idx] = goldSub_
+idxrow = lapply(KOgenes, function(x) which(rownames(gold_) == x))
+gold_ = gold_[unlist(idxrow), ]
+
+#Test correctly replaced, uncomment tt in line 78
+#tmp = sapply(rownames(goldSnode_), function(x) which(x == rownames(gold_)))
+#gold_[tmp[1:10], idx[1:10]]
+#tt[tmp[1:10], idx[1:10]]
+```
+
+##Loop
+Loop over methods, for each method loop over all thresholds and compute stats for the given threshold.
+Store the results in EvalTable
+```{r}
+for(s in 1:length(method)){
+  setwd(wd)
+  setwd(paste0(path, "Network", network, "/Predictions"))
+  
+  evalTable = NULL
+  evalTableSnode = NULL
+  
+  #Read in files
+  pred = read_tsv(paste0("net", network, adj, "Confidence_List_of_Edges_", method[s], ".tsv"), col_names = FALSE)
+  colnames(pred) = c("N1", "N2", "Edge")
+  
+  ######################################################################################################
+  ######################################################################################################
+  
+  #Generate prediction matrix
+  pred_ = spread(pred, N2, Edge)
+  
+  #Generate prediction matrix for S-node network
+  idx = sapply(KOgenes, function(x) which(x == colnames(pred_)))
+  predSnode_ = pred_[, c(1,idx)]
+  
+  #Convert to data.frame and formating
+  es = list(pred_, predSnode_)
+  
+  for(i in 1:length(es)){
+    rown = es[[i]]$N1
+    es[[i]] = as.matrix(es[[i]][-1])
+    rownames(es[[i]]) = rown
+  }
+  
+  pred_ = es[[1]]
+  predSnode_ = es[[2]]
+  
+  ######################################################################################################
+  ######################################################################################################
+  
+  #Remove all predictions for S-genes for which no information is provided in the gold standard
+  tmp = setdiff(colnames(predSnode_), colnames(goldSnode_))
+  idx = lapply(tmp, function(x) which(colnames(predSnode_) == x))
+  if(length(idx) != 0) predSnode_ = predSnode_[,-unlist(idx) ]
+  
+  tmp = setdiff(rownames(predSnode_), rownames(goldSnode_))
+  idx = lapply(tmp, function(x) which(rownames(predSnode_) == x))
+  if(length(idx) != 0) predSnode_ = predSnode_[-unlist(idx), ]
+  
+  #Remove all predictions for E-genes for which no information is provided in the gold standard
+  #Network 3: 3430 columns are dismissed
+  tmp = setdiff(colnames(pred_), colnames(gold_))
+  idx = sapply(tmp, function(x) which(colnames(pred_) == x))
+  if(length(idx) != 0) pred_ = pred_[,-idx ]
+  
+  tmp = setdiff(rownames(pred_), rownames(gold_))
+  idx = sapply(tmp, function(x) which(rownames(pred_) == x))
+  if(length(idx) != 0) pred_ = pred_[-idx, ]
+  
+  ######################################################################################################
+  ######################################################################################################
+  
+  #Sort to make sure S-nodes & E-genes are in same order
+  data = list(pred_, gold_, predSnode_, goldSnode_)
+  for(i in 1:length(data)){
+    coln = colnames(data[[i]])
+    rown = rownames(data[[i]])
+    data[[i]] = data[[i]][order(rown, decreasing = FALSE), ]
+    data[[i]] = data[[i]][, order(coln, decreasing = FALSE)]
+  }
+  
+  #Check order
+  #data[[4]][, 1:dim(gold_)[1]]
+  #data[[3]][, 1:dim(gold_)[1]]
+  
+  #MODIFY:
+  #tmp = data[[3]]
+  #tmp[is.na(tmp)] = 0
+  #tmp = transitive.reduction(tmp)
+  
+  for(k in seq(0,1,0.001)){
+    repl = 0
+    if(k == 0) repl = 1
+    
+    #Score network
+    pm = (data[[1]]>=k) * 1
+    tmp = Score(gold = data[[2]], pred = pm, threshold = k, repl = repl)
+    evalTable = rbind(evalTable, tmp)
+    
+    #Score Snode network
+    pm = (data[[3]]>=k) * 1
+    
+    idx = which(is.na(pm))
+    pm[idx] = 0 #set NA values to 0 to be able to calculate closure
+    pm = transitive.closure(pm, mat = TRUE, loops = FALSE)
+    pm[idx] = NA
+
+    tmp = Score(gold = data[[4]], pred = pm, threshold = k, repl = repl)
+    evalTableSnode = rbind(evalTableSnode, tmp)
+  }
+  
+  write_tsv(evalTable, paste0("net", network, adj,"_EvalTable_alternative_", method[s], ".tsv"), col_names = TRUE)
+  
+  write_tsv(evalTableSnode, paste0("net", network, adj, "_EvalTableSnode_alternative_", method[s], ".tsv"), col_names = TRUE)
+}
+print(paste0("Warnings: ",warnings()))
+print(paste0("Finished: NetScore network ", network))
+```
+

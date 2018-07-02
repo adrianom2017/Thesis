@@ -1,0 +1,217 @@
+---
+title: "DREAM5"
+author: "Adriano Martinelli"
+date: "27/04/2018"
+output: html_document
+---
+
+#Install package
+```{r}
+rm(list = ls())
+# source("http://www.bioconductor.org/biocLite.R")
+# biocLite("limma")
+# biocLite("nem")
+# install.packages("ggplot2")
+# install.packages("pheatmap")
+# install.packages("tidyverse")
+# biocLite("statmod")
+
+
+```
+
+#Load libraries
+```{r}
+library(pheatmap)
+library(readr)
+library('dplyr')
+library('tidyr')
+library(ggplot2)
+library(knitr)
+library(abind)
+
+```
+
+#Parameter
+```{r}
+#Either set network to default or read argument given to script
+args = commandArgs(trailingOnly = TRUE)
+args = as.numeric(args)
+
+if(length(args) == 0){
+  network = c(3)
+  ADJUST = FALSE
+}else{
+  network = args[1]
+  ADJUST = FALSE
+}
+
+#Working directory
+wd = "/Users/adrianomartinelli/polybox/ETH/Bachelor Thesis/DREAM Challange/DREAM5/DREAM5_network_inference_challenge/Evaluation scripts/NEM Script/"
+
+#Euler
+#wd = "/cluster/home/adrianom/DREAM5_EULER/Evaluation scripts/NEM Script"
+setwd(wd)
+
+
+#Files
+files = c('chip_features.tsv', 'expression_data.tsv', 'transcription_factors.tsv')
+goldfiles = paste0("DREAM5_NetworkInference_GoldStandard_Network", network, ".tsv")
+networks = rep(paste0("net", network, "_"), each= length(files))
+
+#Folder
+path = "../../"
+folder = paste0("Network", network,"/")
+subfolder = c('input data/','gold standard/')
+plo = c("PR", "ROC")
+method = c('pval','odds')
+
+#File names
+wd_file = paste0(path, folder, subfolder[1])
+wd_gold = paste0(path, folder, subfolder[2])
+file_input = paste0(rep(wd_file, each = length(files)), paste0(networks, files))
+file_gold = paste0(wd_gold, goldfiles)
+
+#Path to save the plots
+file_out = paste0(path, folder)
+
+#Structure of goldstandard to use
+FULL = FALSE
+
+#Appendix for adjustement
+adj = "";
+if(ADJUST == TRUE) adj = "_adjusted"
+
+
+######################################################################################################
+######################################################################################################
+```
+
+#Read in Files
+```{r}
+setwd(wd)
+
+#load functions
+source("DREAMFUN.R")
+
+#load variables
+if(file.exists(paste0(path, folder, "net", network,"_NEM", adj, ".RData"))){
+  load(paste0(path, folder, "net", network,"_NEM", adj, ".RData"))
+}else if(file.exists(paste0(path, folder, "net", network,"_FILTER.RData"))){
+  load(paste0(path, folder, "net", network,"_FILTER.RData"))}
+
+chip_features = read.table(file = file_input[1], sep = '\t', header = TRUE)
+expression_data = read.table(file = file_input[2], sep = '\t', header = TRUE)
+trans_fac = read.table(file = file_input[3], sep = '\t', header = FALSE)
+
+######################################################################################################
+######################################################################################################
+```
+
+#PCA Analysis
+```{r}
+setwd(wd)
+dir.create(paste0(file_out, "Plots"))
+dir.create(paste0(file_out, "Plots/PCA"))
+setwd(paste0(file_out, "Plots/PCA"))
+
+
+for(i in 1:length(KOgenes)){
+  print(paste0("PCA for ", KOgenes[i]))
+  
+  #Create data.frame with all the pooled experiments for one gene KO
+  tmp = NULL
+  for(j in cList[[i]]){
+    tmp = rbind(tmp, j)
+  }
+  
+  #If only experiments or only controls are available for a certain KO, scaling not possible
+  sc = TRUE
+  if(length(unique(tmp$label)) == 1) sc = FALSE
+  
+  #PCA
+  ir.species = tmp$experiment
+  ir.pca = prcomp(tmp[, 4:dim(tmp)[2]],
+                  rank = 2,
+                  center = TRUE,
+                  scale. = sc)
+  
+  pca.var <- round(100 * ir.pca$sdev^2/sum(ir.pca$sdev^2))
+  ll = min(length(pca.var), 10)
+  q = qplot(x = c(1:ll), y = pca.var[1:ll]) + geom_line() + geom_point() + labs(x = "PC", y = "relative Variance (%)", title = paste0("PCA for knock-out of gene ", KOgenes[i])) + scale_x_continuous(breaks = c(1:ll), labels = waiver())
+  
+  ggsave(
+    filename = paste0(KOgenes[i],"_var.pdf"),
+    device = "pdf",
+    width = 6,
+    height = 4,
+    dpi = 300
+  )
+  
+  #summary(ir.pca)
+  
+  df = as.data.frame(ir.pca$x)
+  df$Experiment = paste0("E",tmp$experiment)
+  df$Label = tmp$label
+  p = ggplot(df, aes(
+    x = PC1,
+    y = PC2,
+    shape = Label,
+    color = Experiment
+  ))
+  p = p + geom_point()
+  p = p + ggtitle(paste0("PCA for knock-out of gene ", KOgenes[i]))
+  p
+  
+  ggsave(
+    filename = paste0(KOgenes[i],".pdf"),
+    device = "pdf",
+    width = 6,
+    height = 4,
+    dpi = 300
+  )
+}
+
+print(paste("Finished: PCA for network ", network))
+######################################################################################################
+######################################################################################################
+```
+
+#Heatmap
+```{r}
+setwd(wd)
+dir.create(paste0(file_out, "Plots/Heatmap"))
+setwd(paste0(file_out, "Plots/Heatmap"))
+
+#Heatmap for KOexp
+print("Heatmap KOexp")
+tmp = expression_data[rownames(KOexp), ]
+tmp = t(tmp)
+
+pdf(filename = paste0("heatmap_network", network,"_KOexp.pdf"), width = 1024, height = 768)
+pheatmap(tmp)
+dev.off()
+#dev.print(pdf, file = paste0("heatmap_network", network,"_KOexp.pdf"), width = 1024, height = 768)
+
+#Heatmap for Cont
+print("Heatmap Cont")
+tmp = expression_data[rownames(Cont), ]
+tmp = t(tmp)
+
+pdf(filename = paste0("heatmap_network", network,"_Cont.pdf"), width = 1024, height = 768)
+pheatmap(tmp)
+dev.off()
+#dev.print(pdf, file = paste0("heatmap_network", network,"_Cont.pdf"), width = 1024, height = 768)
+
+#Heatmap for KOexp & Cont
+print("Heatmap KOexp/Cont")
+tmp = expression_data[c(rownames(KOexp),rownames(Cont)), ]
+tmp = t(tmp)
+
+pdf(filename = paste0("heatmap_network", network,"_KOexp_Cont.pdf"), width = 1024, height = 768)
+pheatmap(tmp)
+dev.off()
+#dev.print(pdf, file = paste0("heatmap_network", network,"_KOexp_Cont.pdf"), width = 1024, height = 768)
+
+######################################################################################################
+######################################################################################################
+```

@@ -1,0 +1,170 @@
+---
+title: "DREAM5"
+author: "Adriano Martinelli"
+date: "27/04/2018"
+output: html_document
+---
+
+#Install package
+```{r}
+rm(list = ls())
+# source("http://www.bioconductor.org/biocLite.R")
+# biocLite("limma")
+# biocLite("nem")
+# install.packages("ggplot2")
+# install.packages("pheatmap")
+# install.packages("tidyverse")
+# biocLite("statmod")
+
+
+```
+
+#Load libraries
+```{r}
+rm(list = ls())
+library(pheatmap)
+library(readr)
+library('dplyr')
+library('tidyr')
+library(ggplot2)
+library(knitr)
+library(abind)
+library(tikzDevice)
+
+```
+
+#Network
+```{r}
+network = c(3)
+
+#Which E-genes attachment method
+alternative = T
+```
+
+#Parameter
+```{r}
+#Working directory
+wd = "/Users/adrianomartinelli/polybox/ETH/Bachelor Thesis/DREAM Challange/DREAM5/DREAM5_network_inference_challenge/Evaluation scripts/NEM Script/"
+
+#Folder
+path = "../../"
+folder = paste0("Network", network,"/")
+plo = c("PR", "ROC")
+
+method = c('pval','odds')
+pat = c("_EvalTable", "_EvalTableSnode", "_EvalTableDREAM")
+net = c("NEM", "S-node", "DREAM")
+
+ne = c("NEM network", "S-node network", "DREAM network")
+met = c("$P$-density", "Log likelihood ratio")
+
+netname = c("\\textit{In silico}")
+if(network == 3) netname = c("\\textit{E. coli}")
+
+#Path to save the plots
+file_out = paste0(path, folder)
+
+alt = ""
+if(alternative == TRUE) alt = "_alternative"
+
+######################################################################################################
+######################################################################################################
+```
+
+#Read in Files
+```{r}
+setwd(wd)
+
+#load functions
+source("DREAMFUN.R")
+
+######################################################################################################
+######################################################################################################
+```
+
+#PR and ROC plots
+```{r}
+
+dataROC = NULL
+dataPR = NULL
+auc = NULL
+
+for(j in 1:length(pat)){
+  dataROC = NULL
+  dataPR = NULL
+  
+  for(i in 1:length(method)){
+    setwd(wd)
+    setwd(paste0(path, folder, "Predictions/", method[i]))
+    
+    if(alternative){
+    data = read_tsv(paste0("../","net", network, pat[j], "_alternative_", method[i], ".tsv"), col_names = TRUE)
+    }else{
+    files = list.files()
+    grepx <- glob2rx(paste0("net",network, pat[j], "_", method[i],"*"))
+    files = files[grep(grepx, files)]
+    print(files)
+    data = read_tsv(file = files, col_names = TRUE)
+    }
+    
+    AUC_PR = AUC(x = data$TPR, y = data$Precision)
+    AUC_ROC = AUC(x = data$FPR, y = data$TPR)
+    tmp = data.frame(PR = AUC_PR, ROC = AUC_ROC, Method = method[i], Network = ne[j])
+    auc = rbind(auc, tmp)
+    
+    tmp = data.frame(Threshold = data$Threshold, x = data$FPR, y = data$TPR, Method = met[i], AUC = AUC_ROC)
+    colnames(tmp) = c("Threshold", "x", "y", "Method", "AUC")
+    dataROC = rbind(dataROC, tmp)
+    
+    tmp = data.frame(threshold = data$Threshold, x = data$TPR, y = data$Precision, Method = met[i], AUC = AUC_PR)
+    colnames(tmp) = c("Threshold", "x", "y", "Method", "AUC")
+    dataPR = rbind(dataPR, tmp)  
+    
+  }
+  
+  setwd(wd)
+  setwd(paste0(path, folder, "Predictions/", method[i]))
+  setwd("../../Plots/")
+  
+  #dataROC = dataROC[order(dataROC$Threshold, decreasing = F),]
+  #dataPR = dataRR[order(dataPR$Threshold, decreasing = F),]
+  
+  p = ggplot(dataROC) + aes(x,y, col = Method) + geom_path(alpha=0.8) + geom_point(size = 0.5) + labs(x = "FPR", y = "TPR", title = paste0(netname, " network"), subtitle = paste0("ROC curve, ", ne[j])) + xlim(0,1) + ylim(0,1) + geom_abline(intercept = 0, slope = 1, linetype = "dotted")
+  
+  ggsave(
+    filename = paste0("net",network, "_", net[j], "_ROC", alt, ".pdf"), bg = "transparent",
+    device = "pdf",
+    width = 6,
+    height = 4,
+    dpi = 300
+  )
+  
+  q = ggplot(dataPR) + aes(x,y, col = Method) + geom_path(alpha=0.8) + geom_point(size = 0.5) + labs(x = "TPR", y = "Precision", title = paste0(netname, " network"), subtitle = paste0("PR curve, ", ne[j])) + xlim(0,1) + ylim(0,1)
+  
+  ggsave(
+    filename = paste0("net",network,"_",net[j], "_PR", alt, ".pdf"), bg = "transparent",
+    device = "pdf",
+    width = 6,
+    height = 4,
+    dpi = 300
+  )
+  
+  setwd("../../../../../Thesis/files/img/")
+  tikz(paste0("net",network, "_", net[j], "_ROC", alt, ".tex"),width=6,height=4)
+  plot(p)
+  dev.off()
+  
+  tikz(paste0("net",network,"_",net[j], "_PR", alt, ".tex"),width=6,height=4)
+  plot(q)
+  dev.off()
+    
+}
+setwd(wd)
+setwd(paste0(path, folder, "Predictions/"))
+
+write_tsv(x = auc, path = paste0("AUC_DATA", alt, ".tsv"), col_names = T)
+
+
+print(paste0("Warnings: ",warnings()))
+print(paste0("Finished: Plotting network ", network))
+```

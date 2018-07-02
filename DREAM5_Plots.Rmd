@@ -1,0 +1,389 @@
+---
+title: "DREAM5_Plots"
+author: "Adriano Martinelli"
+date: "22/05/2018"
+output: html_document
+---
+## Load libraries
+```{r}
+rm(list = ls())
+library(nem)
+library(pheatmap)
+library(DESeq2)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(tikzDevice)
+```
+
+## Parameter list
+```{r}
+N = 12; #Number of S-nodes
+M = 1643-N; #Number of E-nodes, updated after reading in expression data
+R = 3 #Number of replicats
+pA = 1; #Probability of E-nodes attached to network of S-nodes, updated in section #Probability of E-gene attachment
+network = 5
+
+#Knocked down genes
+KOgenes = factor(c("G1", "G10", "G12", "G34", "G52", "G66", "G84", "G120", "G121", "G136", "G169", "G176"))
+KOgenes = KOgenes[order(KOgenes)] #adjust ordering to match with string order of R
+N = length(KOgenes)
+
+#Parameters for the negative binomial distributions. muXX represents the mean. With the size the variance of the distribution is influenced according to the formula: $muXX = mu + mu^2/size$. Though, the bigger the size the smaller the variance. 
+
+#Low copy number parameter
+muLC = 3
+sizeLC = 5
+
+#Medium copy number parameter
+muMC = 100
+sizeMC = 200
+   
+#High copy number parameter
+muHC = 300
+sizeHC = 100
+
+
+
+#Fold-change distribution in log2 values follows a normal distribution
+#For Enodes not influenced by the perturbation sample from a normal distribution with the following parameter
+nimean = 0
+niSD = 1
+
+#For Enodes influenced by the perturbation sample from a normal distribution with the following parameter
+iposmean = 2
+iposSD = 1
+
+#or
+inegmean = -2
+inegSD = 1
+
+#Parameter for count negativ binomial distribution of knocked down Snode. 
+muKD = 1
+sizeKD = 3
+```
+
+#Files
+```{r}
+#Working directory
+wd = "/Users/adrianomartinelli/polybox/ETH/Bachelor\ Thesis/DREAM\ Challange/DREAM5/DREAM5_network_inference_challenge/Evaluation\ scripts/NEM\ Script/"
+setwd(wd)
+
+path = "../../"
+
+#Folder
+folder = paste0("Network", 5,"/")
+method = c('pval','odds')
+
+#Files
+goldfiles = paste0("DREAM5_NetworkInference_GoldStandard_Network", 1, ".tsv")
+
+#generate file names
+file_gold = paste0('gold standard/', goldfiles)
+
+```
+
+#Network structure
+```{r}
+setwd(wd)
+load("../../Network1/net1_NEM.RData")
+load("../../Network1/net3_NEM.RData")
+
+Phi1 = bs_Bayes_odds
+Phi1[bs_Bayes_odds<0.5] = 0
+
+Phi2 = bs_Bayes_pval
+Phi2[bs_Bayes_pval<0.2] = 0
+
+Phi = as(transitive.reduction(Phi2),"graphNEL")
+Phi = transitive.closure(Phi2, loops = F)
+plot(Phi)
+dev.off()
+
+if(require(Rgraphviz)){
+  plot(as(transitive.reduction(Phi2),"graphNEL"), main="original graph")}
+dev.off()
+
+```
+
+#DREAM plots
+```{r}
+wd = "/Users/adrianomartinelli/polybox/ETH/Bachelor\ Thesis/DREAM\ Challange/DREAM5/DREAM5_network_inference_challenge/Evaluation\ scripts/NEM\ Script/"
+setwd(wd)
+setwd("../../Network3/Plots/")
+
+dataROC = NULL
+dataPR = NULL
+#netname = c("\\textit{In silico}")
+netname = c("\\textit{E. coli}")
+network = 3
+ne = c("goldNEM", "goldSnode", "DREAM network")
+met = c("$P$-density", "Log likelihood ratio")
+j = 3
+
+pden = read_csv("~/polybox/ETH/Bachelor Thesis/DREAM Challange/DREAM5/DREAM5_network_inference_challenge/Network1/Predictions/net3pval.txt")
+
+odds = read_csv("~/polybox/ETH/Bachelor Thesis/DREAM Challange/DREAM5/DREAM5_network_inference_challenge/Network1/Predictions/net3odds.txt")
+
+tmp1 = data.frame(x = pden$fpr, y = pden$tpr, Method = "$P$-density")
+tmp2 = data.frame(x = odds$fpr, y = odds$tpr, Method = "Log likelihood ratio")
+colnames(tmp1) = c("x", "y", "Method")
+colnames(tmp2) = c("x", "y", "Method")
+dataROC = rbind(tmp1, tmp2)
+
+tmp1 = data.frame(x = pden$tpr, y = pden$prec, Method = "$P$-density")
+tmp2 = data.frame(x = odds$tpr, y = odds$prec, Method = "Log likelihood ratio")
+colnames(tmp1) = c("x", "y", "Method")
+colnames(tmp2) = c("x", "y", "Method")
+dataPR = rbind(tmp1, tmp2)
+
+p = ggplot(dataROC[seq(1,dim(dataROC)[1], 50),]) + aes(x,y, col = Method) + geom_path(alpha=1, size = 1.5) + labs(x = "FPR", y = "TPR", title = paste0(netname, " network"), subtitle = paste0("ROC curve, ", ne[j])) + xlim(0,1) + ylim(0,1) + geom_abline(intercept = 0, slope = 1, linetype = "dotted")
+
+  ggsave(
+    filename = paste0("net",network, "_DREAM_ROC.pdf"), bg = "transparent",
+    device = "pdf",
+    width = 6,
+    height = 4,
+    dpi = 300
+  )
+
+  q = ggplot(dataPR[seq(1,dim(dataPR)[1], 50),]) + aes(x,y, col = Method) + geom_path(alpha=0.8, size = 1) + labs(x = "TPR", y = "Precision", title = paste0(netname, " network"), subtitle = paste0("PR curve, ", ne[j])) + xlim(0,1) + ylim(0,1)
+  
+  ggsave(
+    filename = paste0("net",network,"_DREAM_PR.pdf"), bg = "transparent",
+    device = "pdf",
+    width = 6,
+    height = 4,
+    dpi = 300
+  )
+  
+  setwd("../../../../../Thesis/files/img/")
+  tikz(paste0("net",network,"_DREAM_ROC.tex"),width=6,height=4)
+  plot(p)
+  dev.off()
+  
+  tikz(paste0("net",network,"_DREAM_PR.tex"),width=6,height=4)
+  plot(q)
+  dev.off()
+
+
+
+```
+
+#Dendogram
+```{r}
+library(nem)
+load("polybox/ETH/Bachelor Thesis/DREAM Challange/DREAM5/DREAM5_network_inference_challenge/Network1/net1_DEA.RData")
+
+resultBayes = bs(pdensity, inference = "ModuleNetwork", nboot = 10)
+
+```
+
+
+## Generate Snode network
+```{r}
+#Gold standard used for Snode network
+setwd(paste0(path, "/Network1/"))
+goldstandard = read_tsv(file_gold, col_names = FALSE)
+colnames(goldstandard) = c("Node1", "Node2", "Edge")
+
+#Expression data
+expression_data = read.table(file = paste0('input data/','net1_expression_data.tsv'), sep = '\t', header = TRUE)
+M = dim(expression_data)[2]-N
+
+gs = as.data.frame(goldstandard)
+
+idx = lapply(KOgenes, function(x) which(x == gs$Node1))
+gs = gs[unlist(idx), ]
+
+idx = lapply(KOgenes, function(x) which(x == gs$Node2))
+eg = gs[-unlist(idx), ]
+gs = gs[unlist(idx), ]
+
+gs_net = spread(gs, Node2, Edge, fill = 0)
+eg_net = spread(eg, Node2, Edge)
+rownames(gs_net) = gs_net$Node1
+rownames(eg_net) = eg_net$Node1
+gs_net = gs_net[-1]
+eg_net = eg_net[-1]
+
+gs_net = transitive.closure(as.matrix(gs_net), loops = FALSE)
+gs_net = as(gs_net, "matrix")
+
+#Plot distribution of number edges to Egenes from Snodes
+qplot(colSums2(as.matrix(eg_net)), geom="histogram", xlab = "Number of S-nodes", main = "Histogram of E-genes attachment", binwidth = 0.5)
+
+#Plot distribution of number of attached Egenes
+qplot(KOgenes, rowSums2(as.matrix(eg_net)), log = "y", xlab = "S-nodes", ylab = "log(number of E-genes)", main = "Histogram of S-nodes attachments")
+```
+
+#Network Plots
+```{r}
+setwd(wd)
+load("../../Network1/net1_NEM.RData")
+#hyper = set.default.parameters(colnames(pdensity))
+#hypertype = "CONTmLLBayes"
+#hyper$type = hypertype
+
+g = bs_Bayes_pval
+g[is.na(g)] = 0
+g[g<0.5] = 0
+
+res.nem = nem(pdensity, models = g, inference = "search", control = hyper)
+
+#jpeg(file = "Plot/resultBayes.jpeg")
+plot(res.nem, transitiveReduction = TRUE, main = "Graph res.nem")
+#dev.off()
+
+```
+
+#Counts density
+```{r}
+setwd(wd)
+load("../../Network5/net5_DEA.RData")
+dens = density(log2(counts+1))
+data = data.frame(x = dens$x, y = dens$y)
+p = ggplot(data) + aes(x,y) + geom_line() +labs(x = "log2(counts+1)", y = "Density", title = "Simulation", subtitle = "Density plot of count matrix")
+
+p
+
+ggsave(filename = "Simulation_Count_Density.pdf", device = "pdf",
+      width = 6,
+      height = 4,
+      dpi = 300)
+
+```
+
+
+#Plot control distributon only
+```{r}
+setwd(wd)
+
+data = NULL
+#control
+mu = c(muLC, muMC, muHC)
+size = c(sizeLC, sizeMC, sizeHC)
+Label = c("Control LC", "Control MC", "Control HC")
+
+xmin = c(0, 50, 150)
+xmax = c(50, 150, 400)
+
+for(i in 1:length(mu)){
+
+y = dnbinom(c(xmin[i]:xmax[i]), size = size[i], mu = mu[i])
+tmp = data.frame(x = c(xmin[i]:xmax[i]),y, Label = Label[i])
+data = rbind(data, tmp)
+
+}
+
+p = ggplot(data) + aes(x,y, color = Label) + geom_path() + labs(x = "Count", y = "Density", title = "Simulation", subtitle = "Control count distribution")
+p
+
+ggsave(filename = "Simulation_Control_Distribution.pdf", device = "pdf",
+      width = 6,
+      height = 4,
+      dpi = 300)
+```
+
+#Plot used distributions
+```{r}
+setwd(wd)
+R = 3
+
+data = NULL
+#control
+mu = c(muLC, muMC, muHC)
+size = c(sizeLC, sizeMC, sizeHC)
+LabelC = c("Control LC", "Control MC", "Control HC")
+
+xmin = c(0, 50, 150)
+xmax = c(50, 150, 400)
+
+for(i in 1:length(mu)){
+
+#control
+  xmax = c(50, 150, 400)
+y = dnbinom(c(xmin[i]:xmax[i]), size = size[i], mu = mu[i])
+tmp = data.frame(x = c(xmin[i]:xmax[i]),y, Label = LabelC[i])
+data = rbind(data, tmp)
+
+#Not influenced
+xmax = c(50,400, 450)
+x_ni = rnorm(R, mean = nimean, sd = niSD)
+foldChng_ni = 2^x_ni
+
+y = sapply(foldChng_ni, function(z) dnbinom(c(0:xmax[i]), size = size[i], mu = mu[i]*z))
+y = as.data.frame(y)
+y = gather(y, key = "x", value = "y")
+y$x = c(0:xmax[i])
+tmp = data.frame(y, Label = "Not influenced")
+data = rbind(data, tmp)
+
+
+#Influenced
+xmax = c(30, 100, 400)
+x_ineg = rnorm(R, mean = inegmean, sd = inegSD)
+foldChng_ineg = 2^x_ineg
+
+y = sapply(foldChng_ineg, function(z) dnbinom(c(0:xmax[i]), size = size[i], mu = mu[i]*z))
+y = as.data.frame(y)
+y = gather(y, key = "x", value = "y")
+y$x = c(0:xmax[i])
+tmp = data.frame(y, Label = "Influenced")
+data = rbind(data, tmp)
+
+}
+
+data = data[order(data$x, decreasing = F),]
+
+p = ggplot(data) + aes(x,y, color = Label) + geom_line() + ylim(0,0.2) +labs(x = "Count", y = "Density", title = "Simulation", subtitle = "Count distributions if E-gene were not influenced or influenced")
+p
+
+ggsave(filename = "Simulation_Sampling_Distributions.pdf", device = "pdf",
+      width = 6,
+      height = 4,
+      dpi = 300)
+
+```
+
+Plot normal density
+```{r}
+#Not influenced
+x = seq(-5, 5, 0.01)
+y = dnorm(x, mean = nimean, sd = niSD)
+data = data.frame(x,y, Label = "Not influenced")
+
+#Influenced
+y = dnorm(x, mean = inegmean, sd = inegSD)
+tmp = data.frame(x,y, Label = "Influenced")
+data = rbind(data,tmp)
+
+p = ggplot(data) + aes(x,y, color = Label) + geom_path() + labs(x = "Count", y = "Density", title = "Simulation", subtitle = "Fold-change Distributions")
+
+p
+
+ggsave(filename = "FoldChange_Distributions.pdf", device = "pdf",
+      width = 6,
+      height = 4,
+      dpi = 300)
+
+```
+
+#P-value histogram
+```{r}
+rm(list = ls())
+wd = "/Users/adrianomartinelli/polybox/ETH/Bachelor\ Thesis/DREAM\ Challange/DREAM5/DREAM5_network_inference_challenge/Evaluation\ scripts/NEM\ Script/"
+setwd(wd)
+load("../../Network3/net3_DEA.RData")
+
+#tikz(file = "plot_test.tex", width = 5, height = 5)
+p = qplot(as.numeric(pval[,4]), geom = "histogram", breaks = seq(0,1,0.01), binwidth = 0.5) + labs(x = "$P$-value", y = "count", title ="\\LaTex, Histogram", subtitle = "$P$-value histogram of network 3, knock-out of gene 235")
+p
+#dev.off()
+
+
+
+
+
+```
+

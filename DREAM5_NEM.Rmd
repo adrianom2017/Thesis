@@ -1,0 +1,291 @@
+---
+title: "DREAM5"
+author: "Adriano Martinelli"
+date: "27/04/2018"
+output: html_document
+---
+
+#Install package
+```{r}
+rm(list = ls())
+# source("http://www.bioconductor.org/biocLite.R")
+# biocLite("limma")
+# biocLite("nem")
+# install.packages("ggplot2")
+# install.packages("pheatmap")
+# install.packages("tidyverse")
+# biocLite("statmod")
+
+
+```
+
+#Load libraries
+```{r}
+library(nem)
+library(readr)
+library(DESeq2)
+library('dplyr')
+library('tidyr')
+library(ggplot2)
+library(knitr)
+library(abind)
+```
+
+#Parameter
+```{r}
+#Either set network to default or read argument given to script
+args = commandArgs(trailingOnly = TRUE)
+args = as.numeric(args)
+
+if(length(args) == 0){
+  network = c(1)
+  bootstraps = 2
+  ADJUST = T
+}else if(length(args) == 3){
+  network = args[1]
+  bootstraps = args[2]
+  if(args[3] == 0){
+      ADJUST = FALSE
+    }else if(args[3] == 1){
+      ADJUST = TRUE
+    }
+}else if(length(args) == 1){
+  network = args[1]
+  bootstraps = 2
+}
+
+inferencetype = "ModuleNetwork"
+hypertype = "CONTmLLBayes"
+
+#Working directory
+wd = "/Users/adrianomartinelli/polybox/ETH/Bachelor\ Thesis/DREAM\ Challange/DREAM5/DREAM5_network_inference_challenge/Evaluation\ scripts/NEM\ Script/"
+
+#Euler
+#wd = "/cluster/home/adrianom/DREAM5_EULER/Evaluation scripts/NEM Script"
+
+#Folder
+path = "../../"
+folder = paste0("Network", network,"/")
+
+#Path to save objects
+file_out = paste0(path, folder)
+
+#Inference methods
+method = c("pval", "odds")
+
+#Appendix for adjustement
+adj = "";
+if(ADJUST == TRUE) adj = "_adjusted"
+
+#Specify thresholds
+thresholds = seq(0,1,0.001)
+
+######################################################################################################
+######################################################################################################
+```
+
+#Read in Files
+```{r}
+setwd(wd)
+
+#load functions
+source("DREAMFUN.R")
+
+#load workspace
+load(paste0(path, folder, "net", network, "_DEA", adj,".RData"))
+
+######################################################################################################
+######################################################################################################
+```
+
+#Prepare for nem interference
+```{r}
+setwd(wd)
+dir.create(paste0(path, folder, "Predictions/"))
+dir.create(paste0(path, folder, "Predictions/", method[1]))
+dir.create(paste0(path, folder, "Predictions/", method[2]))
+dir.create(paste0(path, folder, "Predictions/nem"))
+setwd(paste0(path, folder, "Predictions"))
+
+#Hyper
+hyper = set.default.parameters(colnames(pdensity))
+hyper$type = hypertype
+
+#Save variables for nem
+save(pdensity,
+     lodds,
+     hyper,
+     inferencetype,
+     method,
+     adj,
+     file = paste0("nem", network, adj,".RData"))
+
+######################################################################################################
+######################################################################################################
+```
+
+#Bootstrap
+```{r}
+setwd(wd)
+if(ADJUST == T){
+  arg = 1
+}else{
+  arg = 0
+}
+
+for(k in 1:length(method)){
+
+  #Euler
+  bashcmd = paste0("for i in {1..", bootstraps,"}; do"," bsub -W 00:10 -n 1 -R", " rusage[mem=2000]", " Rscript --vanilla nem.R ", network," ",  k," $i" ," ", args[3]," > output/output",network,k,"$i; done")
+
+  #Mac
+  #bashcmd = paste0("for i in {1..", bootstraps,"}; do", " Rscript --vanilla nem.R ", network," ",  k," $i"," ", arg," > output/output", network, k, "$i; done")
+
+  system(bashcmd)
+}
+
+#wait until all nem threads are finished
+setwd(wd)
+setwd(paste0(path, folder, "Predictions/"))
+
+print("Waiting for nem's to be finished")
+while (!file.exists(paste0("nem/nem.res", adj, network, length(method), bootstraps,".RData"))) {
+  print(paste0("Waiting for nem.res", adj, network, length(method), bootstraps,".RData"))
+  Sys.sleep(10)
+}
+print("Finished: Waiting")
+
+######################################################################################################
+######################################################################################################
+```
+
+#Build bootstrap network
+```{r}
+#Hyper
+hyper = set.default.parameters(colnames(pdensity))
+hyper$type = hypertype
+
+#select files
+print("Read in nems for bootstrap")
+
+setwd(wd)
+setwd(paste0(file_out, "Predictions/"))
+
+files = list.files(path = "nem/")
+grep_lodds <- glob2rx(paste0("nem.res", adj, network,2,"*"))
+grep_pval <- glob2rx(paste0("nem.res", adj, network,1,"*"))
+
+lodds_files = files[grep(grep_lodds, files)]
+pval_files = files[grep(grep_pval, files)]
+
+#generate bootstrap network
+bs_Bayes_pval = bootstrap(pval_files, path = "nem/")
+bs_Bayes_odds = bootstrap(lodds_files, path = "nem/")
+
+#generate E-genes network
+bs_Egenes_pval = bootstrap_eg(pval_files, path = "nem/")
+bs_Egenes_odds = bootstrap_eg(lodds_files, path = "nem/")
+
+print("Finished: Bootstrap")
+######################################################################################################
+######################################################################################################
+```
+
+#List of Edges with confidence score. This list can be used instead of the lists produced by the DREAM5_PREDICTION.Rmd script if one wants all edges with a confidence score, which is obtained from the bootstrap.
+```{r}
+Sdata = list(bs_Bayes_pval, bs_Bayes_odds)
+Edata = list(bs_Egenes_pval, bs_Egenes_odds)
+method = c("pval", "odds")
+
+for(i in 1:length(Sdata)){
+  
+  g = Sdata[[i]]
+  q = Edata[[i]]
+  
+  #Convert to list of Sedges
+  Spred = gather(as.data.frame(g), N2, Edge)
+  Spred = cbind(rownames(g), Spred)
+  colnames(Spred) = c("N1", "N2", "Edge")
+  
+  #Remove self regulation
+  idx = which(Spred$N1 == Spred$N2)
+  Spred = Spred[-idx, ]
+  
+  #Find indices of Snodes in res$pos
+  idx = lapply(KOgenes, function(x) which(rownames(q) == x))
+  
+  #Remove Snodes from Egenes list
+  if (length(unlist(idx)) != 0) q = q[-unlist(idx),]
+  
+  #Remove null node
+  q = q[, 1:(length(KOgenes))]
+  
+  #transpose of res.pos to get directed edges
+  q = t(q)
+  
+  #Convert to list of Eedges
+  Epred = gather(as.data.frame(q), N2, Edge)
+  Epred = cbind(rownames(q), Epred)
+  colnames(Epred) = c("N1", "N2", "Edge")
+  
+  #Merge lists
+  Epred = rbind(Spred, Epred)
+  Epred = Epred[order(Epred$Edge, decreasing = T),]
+
+  write_tsv(Epred, paste0("net", network, adj,"Confidence_List_of_Edges_", method[i], ".tsv"), col_names = FALSE)
+  
+}
+```
+
+
+```{r}
+#Safe workspace
+setwd(wd)
+setwd(paste0(path, folder))
+
+if(network < 5){
+save(
+  chip_features,
+  expression_data,
+  trans_fac,
+  bs_Bayes_odds,
+  bs_Egenes_odds,
+  bs_Bayes_pval,
+  bs_Egenes_pval,
+  cList,
+  pList,
+  fit1,
+  KOgenes,
+  Cont,
+  KOexp,
+  hyper,
+  hypertype,
+  pdensity,
+  lodds,
+  ADJUST,
+  thresholds,
+  file=paste0("net", network, "_NEM", adj,".RData"))
+}else{
+  save(
+  bs_Bayes_odds,
+  bs_Egenes_odds,
+  bs_Bayes_pval,
+  bs_Egenes_pval,
+  hyper,
+  hypertype,
+  KOgenes,
+  pdensity,
+  lodds,
+  ADJUST,
+  thresholds,
+  file=paste0("net", network,"_NEM", adj, ".RData"))
+}
+print(paste0("Warnings: ",warnings()))
+print(paste0("Finished: NEM network ", network))
+```
+
+
+
+
+
+
